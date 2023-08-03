@@ -6,7 +6,7 @@ import math
 from datetime import datetime,timedelta
 import re
 from datetime import datetime, timedelta
-
+import glob
 #function that accepts a string in relative time format and returns a datetime 
 def convert_relative_time(relative_time):
     if "hour" in relative_time:
@@ -172,37 +172,50 @@ def scrape_one_page(url, soup,key):
 
     return data_list
 
-job = 'Data Engineer'
+
+def scrape_job_data(job_title, location, data_up_to):
+    url = f'https://www.simplyhired.com/search?q={job_title}&l={location}&t={data_up_to}'
+    next_page = url
+
+    soup = scrape_page(url)
+    number_of_jobs = soup.find('div', {'data-testid':'headerSerpJobCount'}).p.text
+    number_per_page = len(soup.find_all('ul', {'id':'job-list'})[0].find_all('li', {'class':'css-0'}))
+    number_of_pages = math.ceil(int(number_of_jobs) / int(number_per_page))
+    print({'number_of_jobs': number_of_jobs, 'number_per_page': number_per_page, 'number_of_pages': number_of_pages})
+
+    i = 1
+    df = pd.DataFrame(columns=['job_title', 'company', 'location', 'job_type', 'salary', 'posted_on', 'job_qualification', 'job_description'])
+    while next_page != None:
+        print('Page Number:', i, ' Page Link: ', next_page)
+        soup = scrape_page(next_page)
+        page_data = scrape_one_page(next_page, soup, job_title)
+        df = df.append(page_data)
+
+        i = i + 1
+        next_page = get_cursor(soup, i+1)
+
+    print("Scraping Complete for", job_title)
+    df['salary'], df['min_salary'], df['max_salary'] = zip(*df['salary'].apply(clean_salary))
+    df['rating'] = df['company'].str.extract(r'([0-9.]+)')
+    df['company'] = df['company'].str.replace(r'-\s*\d+\.\d+', '', regex=True).str.strip()
+    df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna("N/A")
+    file_name = f'simply_hired_{job_title.replace(" ", "_").replace("/", "").lower()}.csv'
+    df.to_csv(file_name, index=False)
+
+jobs = ['SAP', 'Software Engineer','Data Engineer', 'AI/ML Engineer']
 location = 'USA'
-data_up_to = 7  #last seven days
+data_up_to = 1  # last seven days
 
-url = f'https://www.simplyhired.com/search?q={job}&l={location}&t={data_up_to}'
-next_page = url
+for job_title in jobs:
+    scrape_job_data(job_title, location, data_up_to)
 
-soup = scrape_page(url)
-number_of_jobs = soup.find('div', {'data-testid':'headerSerpJobCount'}).p.text
-number_per_page = len(soup.find_all('ul', {'id':'job-list'})[0]\
-        .find_all('li', {'class':'css-0'}))
-number_of_pages = math.ceil(int(number_of_jobs)/int(number_per_page))
-print({'number_of_jobs': number_of_jobs, 'number_per_page': number_per_page, 'number_of_pages': number_of_pages})
+csv_files = glob.glob('simply_hired_*.csv')
+dfs = []
+for file in csv_files:
+    df = pd.read_csv(file)
+    dfs.append(df)
+combined_df = pd.concat(dfs, ignore_index=True)
+combined_df.dropna(subset=["company", "location", "posted_on_date"], inplace=True)
+combined_df.to_csv('combined_simply_hired_data.csv', index=False)
 
-i=1
-df = pd.DataFrame(columns=['job_title', 'company', 'location', 'job_type', 'salary', 'posted_on', 'job_qualification', 'job_description'])
-while next_page != None:
-    print('Page Number:', i, ' Page Link: ', next_page)
-    soup = scrape_page(next_page)
-    page_data = scrape_one_page(next_page, soup,job)
-    df = df.append(page_data)
-
-    i = i+1
-    next_page = get_cursor(soup, i+1)
-    
-print("Complete")
-df['salary'], df['min_salary'], df['max_salary'] = zip(*df['salary'].apply(clean_salary))
-df['rating'] = df['company'].str.extract(r'([0-9.]+)')
-df['company'] = df['company'].str.replace(r'-\s*\d+\.\d+', '', regex=True).str.strip()
-
-# Convert 'rating' column to numeric, set non-numeric values as "N/A"
-df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna("N/A")
-
-df.to_csv('simply_hired3.csv',index=False)
+print("Combined CSV file generated successfully.")
